@@ -1,46 +1,44 @@
-FROM python:3.10-slim-bullseye
+FROM python:3.12-slim
 
-ENV PYTHONUNBUFFERED=1
-ENV DATABASE_URL=""
-ENV DEBUG=False
-ENV SECRET_KEY=changeme
-ENV ALLOWED_HOSTS=*
-ENV CSRF_TRUSTED_ORIGINS=
-ENV TIME_ZONE=UTC
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    DATABASE_URL="" \
+    DEBUG=False \
+    SECRET_KEY=changeme \
+    ALLOWED_HOSTS=*
 
-# 1. Install system libraries
-RUN apt-get update && apt-get install -y \
-    libcairo2-dev \
-    gcc \
-    libpq-dev \
+# 1. Install system dependencies (We added git and netcat)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       build-essential \
+       libpq-dev \
+       libjpeg-dev \
+       zlib1g-dev \
+       curl \
+       netcat-openbsd \
+       git \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Prepare the main container directory
+# 2. Create the working directory
 WORKDIR /app
 
-# 3. Copy EVERYTHING from your repo into the container
-COPY . /app/
+# 3. FIX: Copy the specific subfolder contents to the main app folder
+# This grabs what is inside 'horilla-crm' and puts it in the main '/app' spot
+COPY horilla-crm/ /app/
 
-# --- THE FIX IS HERE ---
-# Since your code is inside a subfolder named "horilla-crm",
-# we must change our working directory to be inside that folder.
-WORKDIR /app/horilla-crm
-# -----------------------
+# 4. Install Python dependencies
+# Now requirements.txt is safely in /app/ because of step 3
+RUN pip install --no-cache-dir -r requirements.txt uvicorn[standard] psycopg2-binary gunicorn
 
-# 4. Install dependencies (Now it will find the file!)
-RUN pip install -r requirements.txt && pip install gunicorn
-
-# 5. Create the .env file (It will now be created inside the subfolder)
-RUN rm -f .env.example && \
-    echo "DATABASE_URL=$DATABASE_URL" > .env && \
+# 5. Create the .env file dynamically
+# (We create this manually to ensure Railway variables work with Uvicorn)
+RUN echo "DATABASE_URL=$DATABASE_URL" > .env && \
     echo "DEBUG=$DEBUG" >> .env && \
     echo "SECRET_KEY=$SECRET_KEY" >> .env && \
-    echo "ALLOWED_HOSTS=$ALLOWED_HOSTS" >> .env && \
-    echo "CSRF_TRUSTED_ORIGINS=$CSRF_TRUSTED_ORIGINS" >> .env && \
-    echo "TIME_ZONE=$TIME_ZONE" >> .env
+    echo "ALLOWED_HOSTS=$ALLOWED_HOSTS" >> .env
 
-# 6. Create the entrypoint script
-# We make sure this script runs from the current directory
+# 6. Create a safe entrypoint script
+# We write this manually because we can't be sure the 'docker/' folder exists in your copy
 RUN echo '#!/bin/bash' > /entrypoint.sh && \
     echo 'set -e' >> /entrypoint.sh && \
     echo 'python manage.py migrate' >> /entrypoint.sh && \
@@ -48,9 +46,16 @@ RUN echo '#!/bin/bash' > /entrypoint.sh && \
     echo 'exec "$@"' >> /entrypoint.sh && \
     chmod +x /entrypoint.sh
 
+# 7. Create non-root user for security
+RUN useradd --create-home --uid 1000 appuser && \
+    mkdir -p staticfiles media && \
+    chown -R appuser:appuser /app /entrypoint.sh
+
+USER appuser
+
 EXPOSE 8000
 
 ENTRYPOINT ["/entrypoint.sh"]
 
-# 7. Start Gunicorn
-CMD ["gunicorn", "horilla_crm.wsgi:application", "--bind", "0.0.0.0:8000"]
+# 8. Start with Uvicorn (as suggested by the repo)
+CMD ["uvicorn", "horilla.asgi:application", "--host", "0.0.0.0", "--port", "8000"]
