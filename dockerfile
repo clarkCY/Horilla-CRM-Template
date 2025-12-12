@@ -8,27 +8,26 @@ ENV ALLOWED_HOSTS=*
 ENV CSRF_TRUSTED_ORIGINS=
 ENV TIME_ZONE=UTC
 
-# 1. Install system libraries (including database clients)
+# Install system libraries
 RUN apt-get update && apt-get install -y \
     libcairo2-dev \
     gcc \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Set the working directory
 WORKDIR /app
 
-# 3. Copy only requirements first (to cache dependencies and make builds faster)
-COPY requirements.txt /app/
+# --- CHANGED SECTION ---
+# Instead of copying just requirements first, we copy EVERYTHING.
+# This prevents the "requirements.txt not found" error if the path is slightly off.
+COPY . /app/
+# -----------------------
 
-# 4. Install Python dependencies + Gunicorn
+# Now install dependencies
+# (If this fails, it means your repo is actually empty!)
 RUN pip install -r requirements.txt && pip install gunicorn
 
-# 5. COPY YOUR CODE (This replaces the git clone)
-# This takes whatever is in your 'clarkCY' repo and puts it in the container
-COPY . /app/
-
-# 6. Create the .env file from Railway variables
+# Create config variables
 RUN rm -f .env.example && \
     echo "DATABASE_URL=$DATABASE_URL" > .env && \
     echo "DEBUG=$DEBUG" >> .env && \
@@ -37,7 +36,7 @@ RUN rm -f .env.example && \
     echo "CSRF_TRUSTED_ORIGINS=$CSRF_TRUSTED_ORIGINS" >> .env && \
     echo "TIME_ZONE=$TIME_ZONE" >> .env
 
-# 7. Create the entrypoint script
+# Create entrypoint
 RUN echo '#!/bin/bash' > /entrypoint.sh && \
     echo 'set -e' >> /entrypoint.sh && \
     echo 'python manage.py migrate' >> /entrypoint.sh && \
@@ -49,5 +48,4 @@ EXPOSE 8000
 
 ENTRYPOINT ["/entrypoint.sh"]
 
-# 8. Start the app
 CMD ["gunicorn", "horilla_crm.wsgi:application", "--bind", "0.0.0.0:8000"]
