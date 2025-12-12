@@ -8,39 +8,36 @@ ENV ALLOWED_HOSTS=*
 ENV CSRF_TRUSTED_ORIGINS=
 ENV TIME_ZONE=UTC
 
-# Install system dependencies
+# 1. Install system libraries (including database clients)
 RUN apt-get update && apt-get install -y \
     libcairo2-dev \
     gcc \
-    git \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Clone the CRM specific repository
-RUN git clone https://github.com/horilla-opensource/horilla-crm.git
+# 2. Set the working directory
+WORKDIR /app
 
-# The directory name for CRM is 'horilla-crm', not 'horilla'
-WORKDIR /horilla-crm
+# 3. Copy only requirements first (to cache dependencies and make builds faster)
+COPY requirements.txt /app/
 
-# Checkout master (default, but good to be explicit)
-RUN git checkout master
+# 4. Install Python dependencies + Gunicorn
+RUN pip install -r requirements.txt && pip install gunicorn
 
-# CRM uses .env.example, not .env.dist
-RUN rm -f .env.example
+# 5. COPY YOUR CODE (This replaces the git clone)
+# This takes whatever is in your 'clarkCY' repo and puts it in the container
+COPY . /app/
 
-# Create the .env file from environment variables
-RUN echo "DATABASE_URL=$DATABASE_URL" > .env
-RUN echo "DEBUG=$DEBUG" >> .env
-RUN echo "SECRET_KEY=$SECRET_KEY" >> .env
-RUN echo "ALLOWED_HOSTS=$ALLOWED_HOSTS" >> .env
-RUN echo "CSRF_TRUSTED_ORIGINS=$CSRF_TRUSTED_ORIGINS" >> .env
-RUN echo "TIME_ZONE=$TIME_ZONE" >> .env
+# 6. Create the .env file from Railway variables
+RUN rm -f .env.example && \
+    echo "DATABASE_URL=$DATABASE_URL" > .env && \
+    echo "DEBUG=$DEBUG" >> .env && \
+    echo "SECRET_KEY=$SECRET_KEY" >> .env && \
+    echo "ALLOWED_HOSTS=$ALLOWED_HOSTS" >> .env && \
+    echo "CSRF_TRUSTED_ORIGINS=$CSRF_TRUSTED_ORIGINS" >> .env && \
+    echo "TIME_ZONE=$TIME_ZONE" >> .env
 
-# Install Python dependencies
-RUN pip install -r requirements.txt
-
-# Create a simple entrypoint script dynamically
-# (Horilla CRM doesn't always include a dedicated entrypoint.sh in the root)
+# 7. Create the entrypoint script
 RUN echo '#!/bin/bash' > /entrypoint.sh && \
     echo 'set -e' >> /entrypoint.sh && \
     echo 'python manage.py migrate' >> /entrypoint.sh && \
@@ -52,5 +49,5 @@ EXPOSE 8000
 
 ENTRYPOINT ["/entrypoint.sh"]
 
-# Use Gunicorn for better production performance than runserver
+# 8. Start the app
 CMD ["gunicorn", "horilla_crm.wsgi:application", "--bind", "0.0.0.0:8000"]
