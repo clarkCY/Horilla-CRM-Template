@@ -8,26 +8,29 @@ ENV ALLOWED_HOSTS=*
 ENV CSRF_TRUSTED_ORIGINS=
 ENV TIME_ZONE=UTC
 
-# Install system libraries
+# 1. Install system libraries
 RUN apt-get update && apt-get install -y \
     libcairo2-dev \
     gcc \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# 2. Prepare the main container directory
 WORKDIR /app
 
-# --- CHANGED SECTION ---
-# Instead of copying just requirements first, we copy EVERYTHING.
-# This prevents the "requirements.txt not found" error if the path is slightly off.
+# 3. Copy EVERYTHING from your repo into the container
 COPY . /app/
+
+# --- THE FIX IS HERE ---
+# Since your code is inside a subfolder named "horilla-crm",
+# we must change our working directory to be inside that folder.
+WORKDIR /app/horilla-crm
 # -----------------------
 
-# Now install dependencies
-# (If this fails, it means your repo is actually empty!)
+# 4. Install dependencies (Now it will find the file!)
 RUN pip install -r requirements.txt && pip install gunicorn
 
-# Create config variables
+# 5. Create the .env file (It will now be created inside the subfolder)
 RUN rm -f .env.example && \
     echo "DATABASE_URL=$DATABASE_URL" > .env && \
     echo "DEBUG=$DEBUG" >> .env && \
@@ -36,7 +39,8 @@ RUN rm -f .env.example && \
     echo "CSRF_TRUSTED_ORIGINS=$CSRF_TRUSTED_ORIGINS" >> .env && \
     echo "TIME_ZONE=$TIME_ZONE" >> .env
 
-# Create entrypoint
+# 6. Create the entrypoint script
+# We make sure this script runs from the current directory
 RUN echo '#!/bin/bash' > /entrypoint.sh && \
     echo 'set -e' >> /entrypoint.sh && \
     echo 'python manage.py migrate' >> /entrypoint.sh && \
@@ -48,4 +52,5 @@ EXPOSE 8000
 
 ENTRYPOINT ["/entrypoint.sh"]
 
+# 7. Start Gunicorn
 CMD ["gunicorn", "horilla_crm.wsgi:application", "--bind", "0.0.0.0:8000"]
