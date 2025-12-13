@@ -1,40 +1,46 @@
-# Must be Python 3.10 for Horilla compatibility
-FROM python:3.10-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
-
-# Install the heavy dependencies required for PDFs (WeasyPrint)
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       build-essential libpq-dev libjpeg-dev zlib1g-dev curl netcat-openbsd git \
-       libcairo2-dev pkg-config libpango-1.0-0 libpangoft2-1.0-0 libgdk-pixbuf2.0-0 libffi-dev shared-mime-info \
-    && rm -rf /var/lib/apt/lists/*
+# Stage 1: Build dependencies
+FROM python:3.10-slim-bullseye as builder
 
 WORKDIR /app
 
-COPY . /app/
+# Install build-time dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    python3-dev \
+    libcairo2-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
 
-# Remove psycopg2 from requirements.txt so we can use the binary version
-RUN sed -i '/psycopg2/d' requirements.txt
+# Install Python requirements
+COPY requirements.txt .
+RUN pip install --user --no-cache-dir -r requirements.txt
 
-# Install dependencies
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt uvicorn[standard] psycopg2-binary gunicorn
+# Stage 2: Final runtime image
+FROM python:3.10-slim-bullseye
 
-# Setup script (Entrypoint)
-RUN echo '#!/bin/bash' > /entrypoint.sh && \
-    echo 'set -e' >> /entrypoint.sh && \
-    echo 'python manage.py migrate' >> /entrypoint.sh && \
-    echo 'python manage.py collectstatic --noinput' >> /entrypoint.sh && \
-    echo 'exec "$@"' >> /entrypoint.sh && \
-    chmod +x /entrypoint.sh
+WORKDIR /app
 
-RUN useradd --create-home --uid 1000 appuser && \
-    mkdir -p staticfiles media && \
-    chown -R appuser:appuser /app /entrypoint.sh
+# Install only the runtime libraries needed for Horilla's document generation
+RUN apt-get update && apt-get install -y \
+    libcairo2 \
+    postgresql-client \
+    gettext \
+    && rm -rf /var/lib/apt/lists/*
 
-USER appuser
-EXPOSE 8000
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["uvicorn", "horilla.asgi:application", "--host", "0.0.0.0", "--port", "8000"]
+# Copy installed Python packages from builder stage
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+
+# Copy project files
+COPY . .
+
+# Set environment variables for Railway
+ENV PYTHONUNBUFFERED=1
+ENV PORT=8000
+
+# Compile translations and breadcrumbs (required for Horilla)
+RUN python manage.py compilemessages
+
+# Railway provides the PORT env var; we must bind to 0.0.0.0
+# Using Gunicorn for production instead of 'runserver'
+CMD ["sh", "-c", "python manage.py migrate && gunicorn horilla.wsgi:application --bind 0.0.0.0:${PORT}"]
