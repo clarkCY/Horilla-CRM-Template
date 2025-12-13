@@ -1,46 +1,43 @@
-# Stage 1: Build dependencies
-FROM python:3.10-slim-bullseye as builder
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# Install system dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       build-essential \
+       libpq-dev \
+       libjpeg-dev \
+       zlib1g-dev \
+       curl \
+       netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN useradd --create-home --uid 1000 appuser
 
 WORKDIR /app
 
-# Install build-time dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    python3-dev \
-    libcairo2-dev \
-    pkg-config \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Python requirements
+# Install Python dependencies
 COPY requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt uvicorn[standard] psycopg2-binary
 
-# Stage 2: Final runtime image
-FROM python:3.10-slim-bullseye
-
-WORKDIR /app
-
-# Install only the runtime libraries needed for Horilla's document generation
-RUN apt-get update && apt-get install -y \
-    libcairo2 \
-    postgresql-client \
-    gettext \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy installed Python packages from builder stage
-COPY --from=builder /root/.local /root/.local
-ENV PATH=/root/.local/bin:$PATH
-
-# Copy project files
+# Copy application
 COPY . .
 
-# Set environment variables for Railway
-ENV PYTHONUNBUFFERED=1
-ENV PORT=8000
 
-# Compile translations and breadcrumbs (required for Horilla)
-RUN python manage.py compilemessages
+# Set permissions
+RUN mkdir -p staticfiles media \
+    && chown -R appuser:appuser /app
 
-# Railway provides the PORT env var; we must bind to 0.0.0.0
-# Using Gunicorn for production instead of 'runserver'
-CMD ["sh", "-c", "python manage.py migrate && gunicorn horilla.wsgi:application --bind 0.0.0.0:${PORT}"]
+# Copy entrypoint
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+USER appuser
+
+EXPOSE 8000
+
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["uvicorn", "horilla.asgi:application", "--host", "0.0.0.0", "--port", "8000"]
