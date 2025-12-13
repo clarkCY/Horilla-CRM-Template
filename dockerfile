@@ -7,7 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     SECRET_KEY=changeme \
     ALLOWED_HOSTS=*
 
-# 1. Install system dependencies (We added git and netcat)
+# 1. Install system dependencies
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        build-essential \
@@ -22,23 +22,23 @@ RUN apt-get update \
 # 2. Create the working directory
 WORKDIR /app
 
-# 3. FIX: Copy the specific subfolder contents to the main app folder
-# This grabs what is inside 'horilla-crm' and puts it in the main '/app' spot
-COPY horilla-crm/ /app/
+# 3. FIX: Copy ALL files from the current directory to /app
+# This replaces "COPY horilla-crm/ /app/" which caused the error
+COPY . /app/
 
 # 4. Install Python dependencies
-# Now requirements.txt is safely in /app/ because of step 3
+# requirements.txt is now in /app/ because of step 3
 RUN pip install --no-cache-dir -r requirements.txt uvicorn[standard] psycopg2-binary gunicorn
 
-# 5. Create the .env file dynamically
-# (We create this manually to ensure Railway variables work with Uvicorn)
+# 5. Create the .env file dynamically for Railway variables
 RUN echo "DATABASE_URL=$DATABASE_URL" > .env && \
     echo "DEBUG=$DEBUG" >> .env && \
     echo "SECRET_KEY=$SECRET_KEY" >> .env && \
     echo "ALLOWED_HOSTS=$ALLOWED_HOSTS" >> .env
 
 # 6. Create a safe entrypoint script
-# We write this manually because we can't be sure the 'docker/' folder exists in your copy
+# We stick to this manual script instead of the repo's 'docker/entrypoint.sh' 
+# to ensure migrations run every time.
 RUN echo '#!/bin/bash' > /entrypoint.sh && \
     echo 'set -e' >> /entrypoint.sh && \
     echo 'python manage.py migrate' >> /entrypoint.sh && \
@@ -57,5 +57,5 @@ EXPOSE 8000
 
 ENTRYPOINT ["/entrypoint.sh"]
 
-# 8. Start with Uvicorn (as suggested by the repo)
+# 8. Start with Uvicorn
 CMD ["uvicorn", "horilla.asgi:application", "--host", "0.0.0.0", "--port", "8000"]
