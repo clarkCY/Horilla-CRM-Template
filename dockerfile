@@ -1,4 +1,5 @@
-FROM python:3.12-slim
+# 1. Downgrade to Python 3.10 (Recommended for Horilla)
+FROM python:3.10-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -7,7 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     SECRET_KEY=changeme \
     ALLOWED_HOSTS=*
 
-# 1. Install system dependencies
+# 2. Install system dependencies (Added libcairo2-dev and pkg-config)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        build-essential \
@@ -17,28 +18,27 @@ RUN apt-get update \
        curl \
        netcat-openbsd \
        git \
+       libcairo2-dev \
+       pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Create the working directory
 WORKDIR /app
 
-# 3. FIX: Copy ALL files from the current directory to /app
-# This replaces "COPY horilla-crm/ /app/" which caused the error
+# 3. Copy files
 COPY . /app/
 
 # 4. Install Python dependencies
-# requirements.txt is now in /app/ because of step 3
-RUN pip install --no-cache-dir -r requirements.txt uvicorn[standard] psycopg2-binary gunicorn
+# Upgrade pip/setuptools first to avoid build errors with older packages
+RUN pip install --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt uvicorn[standard] psycopg2-binary gunicorn
 
-# 5. Create the .env file dynamically for Railway variables
+# 5. Create .env file
 RUN echo "DATABASE_URL=$DATABASE_URL" > .env && \
     echo "DEBUG=$DEBUG" >> .env && \
     echo "SECRET_KEY=$SECRET_KEY" >> .env && \
     echo "ALLOWED_HOSTS=$ALLOWED_HOSTS" >> .env
 
-# 6. Create a safe entrypoint script
-# We stick to this manual script instead of the repo's 'docker/entrypoint.sh' 
-# to ensure migrations run every time.
+# 6. Create entrypoint script
 RUN echo '#!/bin/bash' > /entrypoint.sh && \
     echo 'set -e' >> /entrypoint.sh && \
     echo 'python manage.py migrate' >> /entrypoint.sh && \
@@ -46,7 +46,7 @@ RUN echo '#!/bin/bash' > /entrypoint.sh && \
     echo 'exec "$@"' >> /entrypoint.sh && \
     chmod +x /entrypoint.sh
 
-# 7. Create non-root user for security
+# 7. User setup
 RUN useradd --create-home --uid 1000 appuser && \
     mkdir -p staticfiles media && \
     chown -R appuser:appuser /app /entrypoint.sh
@@ -57,5 +57,4 @@ EXPOSE 8000
 
 ENTRYPOINT ["/entrypoint.sh"]
 
-# 8. Start with Uvicorn
 CMD ["uvicorn", "horilla.asgi:application", "--host", "0.0.0.0", "--port", "8000"]
